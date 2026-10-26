@@ -42,7 +42,7 @@
     ]
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.84",
+    "@ai-sdk/anthropic": "^4.0.87",
     "@ai-sdk/google": "^4.0.101",
     "@ai-sdk/openai-compatible": "^3.0.74",
     "@hono/node-server": "^2.1.5",

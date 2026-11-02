@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { AskPanel, type AskPanelHandle } from '../components/AskPanel';
-import { Mark } from '../components/Icon';
+import { Icon, Mark } from '../components/Icon';
 import { RecordView } from '../components/RecordView';
 import { SelectionToAsk } from '../components/SelectionToAsk';
 import { useResource } from '../hooks';
@@ -10,7 +10,7 @@ import { routeHash } from '../router';
 
 const LEARNED = new Set(['inferred', 'recall', 'apply', 'retain']);
 
-/** 按天回看（在新标签页打开）：按当时的顺序重读那一天的讲解和题目；读完可把已学会的安排重新学习 */
+/** 按天回看：按当时的顺序重读那一天的讲解和题目；读完可把已学会的安排重新学习。 */
 export function DayReviewPage({ day, topicId }: { day: string; topicId?: string }) {
   const review = useResource(() => api.dayReview(day, topicId), [day, topicId]);
   const [message, setMessage] = useState('');
@@ -54,6 +54,7 @@ export function DayReviewPage({ day, topicId }: { day: string; topicId?: string 
         </a>
       </header>
       <main className="plain-sheet">
+        <a className="back-link" href={routeHash({ name: 'history', topicId })}><Icon name="back" />返回历史课程</a>
         <div className="title-row">
           <div>
             <h1>{formatDay(day)}的回看</h1>

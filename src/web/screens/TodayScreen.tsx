@@ -43,7 +43,7 @@ export function TodayScreen(props: { topics: Topic[] | null; onTopicsChanged: ()
       <div className="grid top" style={{ marginTop: 16 }}>
         <section className="panel span-8" aria-labelledby="today-records-title"><DailyRecords day={today.data?.date} dateError={today.error} /></section>
         <section className="panel span-4" aria-labelledby="days-title">
-          {days.error ? <><header><h2 id="days-title">按天回看</h2></header><p className="error-text" role="alert">{days.error} <button type="button" className="card-link" onClick={days.reload}>重新加载</button></p></> : <Days days={days.data} />}
+          {days.error ? <><header><h2 id="days-title">历史课程</h2></header><p className="error-text" role="alert">{days.error} <button type="button" className="card-link" onClick={days.reload}>重新加载</button></p></> : <Days days={days.data} />}
         </section>
       </div>
     </>
@@ -252,8 +252,8 @@ function Days({ days }: { days: ReviewDay[] | null }) {
   return (
     <>
       <header>
-        <h2 id="days-title">按天回看</h2>
-        <span className="meta">在新标签页打开</span>
+        <h2 id="days-title">历史课程</h2>
+        <a className="card-link" href={routeHash({ name: 'history' })}>查看全部<Icon name="chevron" /></a>
       </header>
       {days && days.length === 0 && <div className="empty">学完第一节后，这里可以按天重读当时的讲解。</div>}
       <div className="rows">

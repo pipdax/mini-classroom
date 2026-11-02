@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react';
 
 /**
  * 页面地址（hash 路由，静态部署也能用）：
- * #/ 首页 · #/today 今天 · #/learn 学习中的一节 · #/map 认知地图（#/map/知识点） · #/topics/主题 · #/library 速查表与导出
+ * #/ 首页 · #/today 今天 · #/history?topic=主题 历史课程 · #/learn 学习中的一节 · #/map 认知地图（#/map/知识点） · #/topics/主题 · #/library 速查表与导出
  * （#/library/速查表） · #/topic-drafts/讨论 主题澄清 · #/settings 设置 · #/personalization 个性化
- * （#/personalization/prompts 个性化提示词） · #/review/日期?topic=主题 按天回看（在新标签页打开）
+ * （#/personalization/prompts 个性化提示词） · #/review/日期?topic=主题 按天回看
  */
 export type PersonalizationTab = 'learning' | 'prompts';
 
 export type Route =
   | { name: 'home' }
   | { name: 'today' }
+  | { name: 'history'; topicId?: string }
   | { name: 'learn' }
   | { name: 'map'; pointId?: string }
   | { name: 'topic'; topicId: string }
@@ -27,6 +28,8 @@ export function parseRoute(hash: string): Route {
   switch (parts[0]) {
     case 'today':
       return { name: 'today' };
+    case 'history':
+      return { name: 'history', topicId: params.get('topic') || undefined };
     case 'learn':
       return { name: 'learn' };
     case 'map':
@@ -56,6 +59,8 @@ export function routeHash(route: Route): string {
       return '#/';
     case 'today':
       return '#/today';
+    case 'history':
+      return `#/history${route.topicId ? `?topic=${encodeURIComponent(route.topicId)}` : ''}`;
     case 'learn':
       return '#/learn';
     case 'map':

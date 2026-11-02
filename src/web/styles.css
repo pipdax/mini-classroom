@@ -418,7 +418,14 @@ pre, code { font-family: var(--font-code); }
 
 /* 首页两列：2 × 538 + 24 = 1100，两个主入口共用一个首屏。 */
 .home-heading .greeting { font-size: 36px; }
-.home-date { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: var(--fs-small); margin-bottom: 24px; }
+.home-heading-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.home-date { display: flex; gap: 12px; color: var(--muted); font-size: var(--fs-small); flex-wrap: wrap; }
+.home-history-link { background: var(--surface); flex: none; }
+.history-toolbar { flex-wrap: wrap; }
+.history-filter { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.history-filter > span { flex: none; color: var(--muted); }
+.history-filter .select { width: 240px; max-width: 100%; min-width: 0; }
+.history-day .row-title { white-space: normal; }
 .home-entries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 28px; }
 .home-entry { display: flex; flex-direction: column; padding: 28px; min-width: 0; }
 .home-entry-label { display: flex; gap: 8px; align-items: center; color: var(--accent); font-size: var(--fs-small); margin-bottom: 16px; }
@@ -468,7 +475,9 @@ pre, code { font-family: var(--font-code); }
 }
 @media (max-width: 700px) {
   .home-heading .greeting { font-size: 28px; }
-  .home-date { margin-bottom: 18px; }
+  .home-heading-top { margin-bottom: 18px; }
+  .history-filter { width: 100%; }
+  .history-filter .select { flex: 1; }
   .home-entry { padding: 22px; }
   .home-search input { font-size: 16px; }
 }

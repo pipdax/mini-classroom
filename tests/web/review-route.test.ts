@@ -7,6 +7,8 @@ describe('页面地址', () => {
     const routes = [
       { name: 'home' },
       { name: 'today' },
+      { name: 'history' },
+      { name: 'history', topicId: '主题 / A&B' },
       { name: 'learn' },
       { name: 'map' },
       { name: 'map', pointId: 'p1' },
@@ -37,6 +39,13 @@ describe('页面地址', () => {
     for (const hash of ['', '#', '#/nope', '#/review', '#/review/20261020', '#/topics', '#/topic-drafts']) {
       expect(parseRoute(hash)).toEqual({ name: 'home' });
     }
+  });
+
+  it('历史课程可以直接打开，筛选主题在刷新后保留', () => {
+    expect(routeHash({ name: 'history' })).toBe('#/history');
+    expect(parseRoute('#/history')).toEqual({ name: 'history', topicId: undefined });
+    expect(parseRoute('#/history?topic=topic-1')).toEqual({ name: 'history', topicId: 'topic-1' });
+    expect(parseRoute('#/history?topic=')).toEqual({ name: 'history', topicId: undefined });
   });
 
   it('个性化的两个标签有独立地址，刷新后保持当前分类', () => {

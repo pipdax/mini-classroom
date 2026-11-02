@@ -5,7 +5,7 @@ import { SessionContents, describeCounts, useSessionStart } from '../components/
 import { usePolling, useResource } from '../hooks';
 import { navigate, routeHash } from '../router';
 
-/** 首页并列承载探索和继续学习，具体安排与记录交给「今天」。 */
+/** 首页承载探索、继续学习和历史入口，具体安排交给「今天」。 */
 export function HomeScreen(props: { topics: Topic[] | null; topicsError: string; onTopicsChanged: () => void; onStart: (session: Session, notice?: string) => void }) {
   const { topics, topicsError, onTopicsChanged, onStart } = props;
   const preview = useResource(() => api.preview(), []);
@@ -21,7 +21,10 @@ export function HomeScreen(props: { topics: Topic[] | null; topicsError: string;
   return (
     <div className="home-page">
       <header className="home-heading">
-        <div className="home-date"><span>首页</span><time>{date}</time></div>
+        <div className="home-heading-top">
+          <div className="home-date"><span>首页</span><time>{date}</time></div>
+          <a className="btn home-history-link" href={routeHash({ name: 'history' })}><Icon name="history" />历史课程<Icon name="chevron" /></a>
+        </div>
         <h1 className="greeting">今天，学点想学的。</h1>
         <p className="greeting-sub">打开一个新主题，也让已经学过的留在脑海里。</p>
       </header>

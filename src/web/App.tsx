@@ -6,6 +6,7 @@ import { useReminders } from './reminders';
 import { type Route, navigate, routeHash, useRoute } from './router';
 import { DayReviewPage } from './screens/DayReviewPage';
 import { HomeScreen } from './screens/HomeScreen';
+import { HistoryScreen } from './screens/HistoryScreen';
 import { LearnScreen } from './screens/LearnScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { MapScreen } from './screens/MapScreen';
@@ -19,6 +20,7 @@ import './styles.css';
 const NAV: { route: Route; label: string; icon: IconName }[] = [
   { route: { name: 'home' }, label: '首页', icon: 'home' },
   { route: { name: 'today' }, label: '今天', icon: 'today' },
+  { route: { name: 'history' }, label: '历史课程', icon: 'history' },
   { route: { name: 'map' }, label: '认知地图', icon: 'map' },
   { route: { name: 'library' }, label: '速查表与导出', icon: 'library' },
 ];
@@ -31,6 +33,7 @@ const PREFERENCES_NAV: { route: Route; label: string; icon: IconName }[] = [
 const TITLES: Record<Route['name'], string> = {
   home: '首页',
   today: '今天',
+  history: '历史课程',
   learn: '微课堂',
   map: '认知地图',
   topic: '学习主题',
@@ -55,7 +58,7 @@ export function App() {
   }, []);
   useEffect(() => setMenuOpen(false), [route]);
 
-  // 回看页在新标签页里打开，没有侧栏
+  // 回看页独立展示完整内容，没有侧栏
   if (route.name === 'review') return <DayReviewPage day={route.day} topicId={route.topicId} />;
 
   const startSession = (next: Session, notice?: string) => {
@@ -77,7 +80,7 @@ export function App() {
         </div>
         <div className="sidebar-scroll">
           {NAV.map((item) => (
-            <a key={item.label} className="nav-item" href={routeHash(item.route)} aria-current={isCurrent(route, item.route) ? 'page' : undefined}>
+            <a key={item.label} className="nav-item" href={routeHash(item.route)} aria-current={isCurrent(route, item.route) ? 'page' : undefined} onClick={() => setMenuOpen(false)}>
               <Icon name={item.icon} />
               {item.label}
             </a>
@@ -108,6 +111,7 @@ export function App() {
         <main className="canvas">
           {route.name === 'home' && <HomeScreen topics={topics.data} topicsError={topics.error} onTopicsChanged={topics.reload} onStart={startSession} />}
           {route.name === 'today' && <TodayScreen topics={topics.data} onTopicsChanged={topics.reload} onStart={startSession} />}
+          {route.name === 'history' && <HistoryScreen key={route.topicId ?? 'all'} topicId={route.topicId} topics={topics.data} topicsError={topics.error} onTopicsChanged={topics.reload} />}
           {route.name === 'learn' && <LearnScreen initial={session} onDone={() => setSession(null)} />}
           {route.name === 'map' && <MapScreen pointId={route.pointId} />}
           {route.name === 'topic' && <TopicScreen key={route.topicId} topicId={route.topicId} onTopicsChanged={topics.reload} />}

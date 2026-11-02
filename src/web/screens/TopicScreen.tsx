@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { type PlacementState, api } from '../api';
 import { OPTION_LETTERS, PRIORITY_LABEL, formatDay } from '../labels';
 import { usePolling, useResource } from '../hooks';
-import { openReview } from '../router';
+import { openReview, routeHash } from '../router';
 import { RichMarkdown } from '../RichMarkdown';
 import { TopicSection } from './MapScreen';
 import { TopicBrief } from '../components/TopicBrief';
@@ -110,6 +110,7 @@ export function TopicScreen({ topicId, onTopicsChanged }: { topicId: string; onT
                   </button>
                 ))}
               </div>
+              <a className="card-link" style={{ marginTop: 12 }} href={routeHash({ name: 'history', topicId })}>查看全部历史课程</a>
             </section>
           </aside>
         </div>

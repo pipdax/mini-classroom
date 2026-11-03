@@ -31,7 +31,10 @@ export interface FillPoolDeps {
  */
 export async function fillPool({ db, model, settings, clock, illustrations }: FillPoolDeps, now: Date): Promise<{ generated: number; retryable: unknown }> {
   const generationSettings = settings();
-  const guidanceCurrent = () => sameContentGuidance(generationSettings.contentGuidance, settings().contentGuidance);
+  const settingsCurrent = () => {
+    const current = settings();
+    return generationSettings.reviewIntensity === current.reviewIntensity && sameContentGuidance(generationSettings.contentGuidance, current.contentGuidance);
+  };
   const points = loadPoints(db);
   const states = loadStates(db);
   const needs = planPool({
@@ -42,16 +45,17 @@ export async function fillPool({ db, model, settings, clock, illustrations }: Fi
     horizonMs: POOL_HORIZON_MS,
     newCount: SESSIONS_AHEAD * generationSettings.maxNewPerSession,
     prefs: generationSettings.formPrefs,
+    reviewIntensity: generationSettings.reviewIntensity,
   });
   const byId = new Map(points.map((p) => [p.id, p]));
   const known = loadExistingKnowledge(db).map((k) => k.text);
   const results = await settleWithLimit(
     needs.map((need) => async () => {
       const excluded = () => db.select().from(memoryStates).where(eq(memoryStates.knowledgePointId, need.knowledgePointId)).get()?.excluded;
-      if (excluded() || !guidanceCurrent()) return;
+      if (excluded() || !settingsCurrent()) return;
       const ctx = contextOf(byId.get(need.knowledgePointId)!, byId, { state: states.get(need.knowledgePointId) ?? UNLEARNED, existingKnowledge: known });
       const generated = await generateItem(model, ctx, need, { illustrations, contentGuidance: generationSettings.contentGuidance });
-      if (excluded() || !guidanceCurrent()) return;
+      if (excluded() || !settingsCurrent()) return;
       saveGeneratedItem(db, generated, clock());
       return true;
     }),

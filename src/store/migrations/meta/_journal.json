@@ -57,6 +57,13 @@
       "when": 1792688769619,
       "tag": "0007_topic_planning",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793674086276,
+      "tag": "0008_review_intensity",
+      "breakpoints": true
     }
   ]
 }

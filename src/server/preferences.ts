@@ -43,12 +43,12 @@ export function createPreferences({ db, env = process.env }: PreferencesDeps) {
     };
   }
 
-  /** 保存设置；引导词变化时只作废尚未开始的内容，再按新要求准备。 */
+  /** 保存设置；强度或引导词变化时重新准备尚未开始的内容。 */
   function updateSettings(patch: Partial<UserSettings>, now: Date) {
     return db.transaction((tx) => {
-      const before = resolveContentGuidance(readUserSettings(tx, env));
+      const before = readUserSettings(tx, env);
       const saved = writeUserSettings(tx, patch, now, env);
-      if (!sameContentGuidance(before, resolveContentGuidance(saved))) {
+      if (before.reviewIntensity !== saved.reviewIntensity || !sameContentGuidance(resolveContentGuidance(before), resolveContentGuidance(saved))) {
         tx.update(items).set({ status: 'void' }).where(and(eq(items.status, 'pooled'), inArray(items.kind, ['lesson', 'review']))).run();
       }
       enqueue(tx, 'fill_pool', { now: now.toISOString() }, now, { dedupe: true });

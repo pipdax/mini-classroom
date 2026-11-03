@@ -575,7 +575,7 @@ function ResultView(props: {
             <button type="button" className="btn" onClick={() => rate('easy')} disabled={busy}>
               轻松
             </button>
-            <span className="muted small">决定下次多久后复习 · 键盘 1 / 2 / 3</span>
+            <span className="muted small">影响后续复习安排 · 键盘 1 / 2 / 3</span>
           </div>
         ) : (
           <div className="actions-row">

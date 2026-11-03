@@ -260,7 +260,7 @@ export function TopicSection(props: { topic: MapTopic; map: CognitiveMap; select
 
 function PointCard({ point, selected }: { point: MapPoint; selected: boolean }) {
   const className = point.excluded ? 'excluded' : point.onEdge ? 'edge' : point.fog ? 'fog' : `st-${point.stage}`;
-  const meta = point.excluded ? `不学 · ${point.stageLabel}` : point.onEdge ? '下一步可学' : point.fog ? '前置还没学会' : point.nextReviewAt ? `${point.stageLabel} · ${relativeDue(point.nextReviewAt)}复习` : point.stageLabel;
+  const meta = point.excluded ? `不学 · ${point.stageLabel}` : point.reviewCompleted ? '已完成轻量巩固' : point.onEdge ? '下一步可学' : point.fog ? '前置还没学会' : point.nextReviewAt ? `${point.stageLabel} · ${relativeDue(point.nextReviewAt)}复习` : point.stageLabel;
   return (
     <button type="button" className={`point ${className}`} aria-current={selected} onClick={() => navigate({ name: 'map', pointId: point.id })}>
       <span className="p-title">{point.title}</span>
@@ -334,8 +334,10 @@ function PointPanel({ pointId, map, onChanged }: { pointId: string; map: Cogniti
           <div className="actions-row" style={{ marginTop: 12 }}>
             {detail.data.excluded && <span className="pill learning-excluded">不学</span>}
             <span className={`pill ${detail.data.stage === 'unlearned' ? '' : 'accent'}`}>{STAGE_LABEL[detail.data.stage]}</span>
+            {detail.data.reviewCompleted && <span className="pill">已完成轻量巩固</span>}
             {detail.data.nextReviewAt && <span className="muted small">下次复习：{relativeDue(detail.data.nextReviewAt)}</span>}
           </div>
+          {detail.data.reviewCompleted && <p className="muted small">低档下不再自动复习，学习记录已保留。切回高档或重新学习后会继续巩固。</p>}
           <p style={{ marginTop: 12 }}>{detail.data.summary}</p>
           {point?.prerequisiteIds.length ? (
             <p className="muted small" style={{ marginTop: 8 }}>

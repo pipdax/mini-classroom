@@ -3,7 +3,8 @@ import { type SQL, and, asc, desc, eq, gte, inArray, isNull, lt, or } from 'driz
 import { chunksOf } from '../domain/chunks';
 import { masteryOf } from '../domain/mastery';
 import { cognitiveEdge } from '../domain/edge';
-import { type Stage, UNLEARNED, hasLearned, needsDecomposition, relearn } from '../domain/memory';
+import { type Stage, UNLEARNED, hasLearned, isDue, needsDecomposition, relearn, reviewCompleted, reviewDueAt } from '../domain/memory';
+import type { Settings } from '../settings';
 import type { CheatsheetScope } from '../jobs/handlers';
 import { enqueue } from '../jobs/queue';
 import type { Db } from '../store/db';
@@ -13,6 +14,7 @@ import { LearningError, dayFormatter, dayRange, toRecord } from './views';
 
 export interface KnowledgeDeps {
   db: Db;
+  settings: () => Settings;
 }
 
 const STAGE_LABEL: Record<Stage, string> = {
@@ -25,12 +27,13 @@ const STAGE_LABEL: Record<Stage, string> = {
 };
 
 /** 认知地图、作答留档、按天回看、重新学习、已有知识、速查表与导出 */
-export function createKnowledge({ db }: KnowledgeDeps) {
+export function createKnowledge({ db, settings }: KnowledgeDeps) {
   /**
    * 认知地图：一张图覆盖所有学习主题。每个知识点带掌握阶段；认知边缘高亮（下一步可学）；
    * 未学且不在边缘的被迷雾覆盖；同一整体的部分全部进入保持阶段后合并为组块；联结带用户原话。
    */
   function cognitiveMap(now: Date) {
+    const intensity = settings().reviewIntensity;
     const points = loadPoints(db);
     const states = loadStates(db);
     const stageOf = (id: string) => (states.get(id) ?? UNLEARNED).stage;
@@ -50,10 +53,7 @@ export function createKnowledge({ db }: KnowledgeDeps) {
           excluded: own.filter((p) => p.excluded).length,
           learned: own.filter((p) => hasLearned(stageOf(p.id))).length,
           edge: own.filter((p) => edgeIds.has(p.id)).length,
-          due: own.filter((p) => {
-            const card = states.get(p.id)?.card;
-            return !p.excluded && card != null && card.due.getTime() <= now.getTime();
-          }).length,
+          due: own.filter((p) => !p.excluded && isDue(states.get(p.id) ?? UNLEARNED, now, intensity)).length,
         };
       }),
       points: points
@@ -74,7 +74,8 @@ export function createKnowledge({ db }: KnowledgeDeps) {
             mastery: masteryOf(state),
             decomposed: p.decomposed ?? false,
             origin: p.origin,
-            nextReviewAt: p.excluded ? null : state.card?.due ?? null,
+            nextReviewAt: p.excluded ? null : reviewDueAt(state, intensity),
+            reviewCompleted: !p.excluded && reviewCompleted(state, intensity),
             prerequisiteIds: p.prerequisiteIds,
             confusableIds: p.confusableIds,
             partOfIds: p.partOfIds,
@@ -102,6 +103,7 @@ export function createKnowledge({ db }: KnowledgeDeps) {
 
   /** 一个知识点的详情：掌握阶段、全部作答留档（含申诉结果）、与它相关的联结 */
   function pointDetail(pointId: string) {
+    const intensity = settings().reviewIntensity;
     const point = loadPoints(db).find((p) => p.id === pointId);
     if (!point) throw new LearningError('知识点不存在', 404);
     const state = loadStates(db).get(pointId) ?? UNLEARNED;
@@ -115,7 +117,8 @@ export function createKnowledge({ db }: KnowledgeDeps) {
       excluded: point.excluded,
       stage: state.stage,
       stageLabel: STAGE_LABEL[state.stage],
-      nextReviewAt: point.excluded ? null : state.card?.due ?? null,
+      nextReviewAt: point.excluded ? null : reviewDueAt(state, intensity),
+      reviewCompleted: !point.excluded && reviewCompleted(state, intensity),
       canRelearn: !point.excluded && hasLearned(state.stage),
       records,
     };
@@ -269,6 +272,7 @@ export function createKnowledge({ db }: KnowledgeDeps) {
    * 导出为 Markdown，只供用户本人使用：选定主题的知识点（含阶段、联结），可选附上作答记录和速查表。
    */
   function exportMarkdown(input: { topicIds: string[]; records: boolean; cheatsheetId?: string }, now: Date) {
+    const intensity = settings().reviewIntensity;
     const chosen = db.select().from(topics).where(inArray(topics.id, input.topicIds)).orderBy(asc(topics.createdAt)).all();
     if (chosen.length === 0) throw new LearningError('请选择至少一个学习主题', 400);
     const points = loadPoints(db);
@@ -285,7 +289,9 @@ export function createKnowledge({ db }: KnowledgeDeps) {
         const state = states.get(p.id) ?? UNLEARNED;
         lines.push(`### ${p.title}`, '', `- 掌握阶段：${STAGE_LABEL[state.stage]}`, `- 要掌握的内容：${p.summary}`);
         if (p.excluded) lines.push('- 学习选择：不学（可重新加入学习）');
-        if (!p.excluded && state.card && state.stage !== 'unlearned') lines.push(`- 下次复习：${state.card.due.toISOString().slice(0, 10)}`);
+        const due = reviewDueAt(state, intensity);
+        if (!p.excluded && reviewCompleted(state, intensity)) lines.push('- 复习安排：已完成轻量巩固');
+        if (!p.excluded && due) lines.push(`- 下次复习：${due.toISOString().slice(0, 10)}`);
         for (const c of links.filter((l) => l.fromPointId === p.id || l.toPointId === p.id)) {
           const other = c.fromPointId === p.id ? (c.toPointId ? byId.get(c.toPointId)?.title : known.get(c.toExistingId ?? '')) : byId.get(c.fromPointId)?.title;
           lines.push(`- 联结「${other ?? ''}」：${c.relation}`, `  > ${c.quote.replace(/\n/g, '\n  > ')}`);

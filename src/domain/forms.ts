@@ -1,3 +1,5 @@
+import type { ReviewIntensity } from './review';
+
 /** 理解阶段日常轮换的讲解形式 */
 export const EXPLAIN_FORMS = [
   'explain_direct',
@@ -74,8 +76,10 @@ export function isMobileForm(form: string): boolean {
 /**
  * 某阶段此刻可用的检验形式：去掉被屏蔽的（核心形式不受屏蔽影响），在手机上只留适合手机的。
  * 全部被去掉时退回核心形式，保证总有一种可用。
+ * 低档统一用选择题，高档再按阶段和形式偏好挑选。
  */
-export function questionFormsFor(stage: CheckStage, prefs: FormPrefs, mobile = false): QuestionForm[] {
+export function questionFormsFor(stage: CheckStage, prefs: FormPrefs, mobile = false, intensity: ReviewIntensity = 'high'): QuestionForm[] {
+  if (intensity === 'low') return ['mcq'];
   const { forms, core } = STAGE_QUESTION_FORMS[stage];
   const allowed = forms.filter((f) => (f === core || !prefs.blocked.includes(f)) && (!mobile || isMobileForm(f)));
   if (allowed.length > 0) return allowed;

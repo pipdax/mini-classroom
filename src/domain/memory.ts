@@ -1,5 +1,6 @@
 import { type Card, type Grade, Rating, createEmptyCard, fsrs } from 'ts-fsrs';
 import type { CheckStage } from './forms';
+import { EMPTY_REVIEW_PROGRESS, UNCONFIRMED_REVIEW_PROGRESS, type ReviewContext, type ReviewIntensity, type ReviewProgress, nextReviewProgress } from './review';
 
 /**
  * 掌握阶段：理解 → 回忆 → 应用 → 保持。
@@ -26,6 +27,8 @@ export interface MemoryState {
   pendingContrast: boolean;
   /** 最近一次误解的内容，供对比讲解有针对性地讲 */
   lastMisconception: string | null;
+  /** 旧的作答快照可能尚未记录轻量巩固证据。 */
+  reviewProgress?: ReviewProgress;
 }
 
 export const UNLEARNED: MemoryState = {
@@ -36,6 +39,7 @@ export const UNLEARNED: MemoryState = {
   failStreak: 0,
   pendingContrast: false,
   lastMisconception: null,
+  reviewProgress: EMPTY_REVIEW_PROGRESS,
 };
 
 /** 回忆阶段答对后，记忆稳定性达到这么多天，进入应用阶段 */
@@ -84,9 +88,14 @@ export function applyLessonOutcome(
   forms: { explainForm: string; questionForm: string },
   outcome: Outcome,
   now: Date,
+  context?: ReviewContext,
 ): MemoryState {
   if (hasLearned(state.stage)) throw new Error(`知识点已处于 ${state.stage} 阶段，不能再按讲解结果更新`);
-  const base = { lastExplainForm: forms.explainForm, lastQuestionForm: forms.questionForm };
+  const base = {
+    lastExplainForm: forms.explainForm,
+    lastQuestionForm: forms.questionForm,
+    reviewProgress: nextReviewProgress(progressOf(state), forms.questionForm, outcome, context?.answeredAt ?? now, context?.timeZone ?? 'UTC'),
+  };
   if (!outcome.correct) return { ...state, ...base, ...afterWrong(state, outcome), stage: 'understand', card: null };
   const card = scheduler.next(createEmptyCard(now), now, toGrade(outcome)).card;
   return { ...state, ...base, ...afterRight(), stage: 'recall', card };
@@ -98,16 +107,25 @@ export function applyLessonOutcome(
  * - 回忆、应用、保持：按记忆评分更新卡片。答对且记忆足够稳定时进入下一阶段；
  *   答错退回回忆阶段，间隔由 FSRS 缩短。
  */
-export function applyReviewOutcome(state: MemoryState, questionForm: string, outcome: Outcome, now: Date): MemoryState {
+export function applyReviewOutcome(state: MemoryState, questionForm: string, outcome: Outcome, now: Date, context?: ReviewContext): MemoryState {
+  const reviewProgress = nextReviewProgress(progressOf(state), questionForm, outcome, context?.answeredAt ?? now, context?.timeZone ?? 'UTC');
   if (state.stage === 'inferred') {
-    if (!outcome.correct) return { ...state, ...afterWrong(state, outcome), lastQuestionForm: questionForm, stage: 'understand', card: null };
+    if (!outcome.correct) return { ...state, ...afterWrong(state, outcome), reviewProgress, lastQuestionForm: questionForm, stage: 'understand', card: null };
     const card = scheduler.next(createEmptyCard(now), now, toGrade(outcome)).card;
-    return { ...state, ...afterRight(), lastQuestionForm: questionForm, stage: 'recall', card };
+    return { ...state, ...afterRight(), reviewProgress, lastQuestionForm: questionForm, stage: 'recall', card };
   }
   if (!hasSchedule(state.stage) || state.card === null) throw new Error('知识点尚未进入回忆阶段，不能按复习结果更新');
   const card = scheduler.next(state.card, now, toGrade(outcome)).card;
-  if (!outcome.correct) return { ...state, ...afterWrong(state, outcome), card, lastQuestionForm: questionForm, stage: 'recall' };
-  return { ...state, ...afterRight(), card, lastQuestionForm: questionForm, stage: promote(state.stage, card) };
+  if (!outcome.correct) return { ...state, ...afterWrong(state, outcome), reviewProgress, card, lastQuestionForm: questionForm, stage: 'recall' };
+  const stage = context?.intensity === 'low' ? state.stage : promote(state.stage, card);
+  return { ...state, ...afterRight(), reviewProgress, card, lastQuestionForm: questionForm, stage };
+}
+
+/** 没有历史证据的已学内容，先保留复习；推断掌握仍需一次实际检验。 */
+function progressOf(state: MemoryState): ReviewProgress {
+  if (state.reviewProgress) return state.reviewProgress;
+  if (state.stage === 'unlearned' || state.stage === 'inferred') return EMPTY_REVIEW_PROGRESS;
+  return UNCONFIRMED_REVIEW_PROGRESS;
 }
 
 /** 答对后是否进入下一阶段：看答对后的记忆稳定性（天） */
@@ -149,7 +167,7 @@ export function fromPlacement(result: 'correct' | 'inferred' | 'unknown', now: D
   // 按"轻松"建卡，再把到期时间定在两三周后（FSRS 默认参数下"轻松"只给 8 天左右）
   const card = scheduler.next(createEmptyCard(now), now, Rating.Easy).card;
   const due = new Date(now.getTime() + PLACEMENT_VERIFY_DAYS * 24 * 3600 * 1000);
-  return { ...UNLEARNED, stage: 'recall', card: { ...card, due, scheduled_days: PLACEMENT_VERIFY_DAYS } };
+  return { ...UNLEARNED, stage: 'recall', reviewProgress: UNCONFIRMED_REVIEW_PROGRESS, card: { ...card, due, scheduled_days: PLACEMENT_VERIFY_DAYS } };
 }
 
 /**
@@ -158,12 +176,24 @@ export function fromPlacement(result: 'correct' | 'inferred' | 'unknown', now: D
  */
 export function relearn(state: MemoryState): MemoryState {
   if (!hasLearned(state.stage)) throw new Error(`知识点处于 ${state.stage} 阶段，还没学过，不能重新学习`);
-  return { ...state, stage: 'understand', card: null, failStreak: 0 };
+  return { ...state, stage: 'understand', card: null, failStreak: 0, reviewProgress: EMPTY_REVIEW_PROGRESS };
+}
+
+/** 完成轻量巩固只停止低档下的自动复习，不改变学习阶段。 */
+export function reviewCompleted(state: MemoryState, intensity: ReviewIntensity): boolean {
+  return intensity === 'low' && hasSchedule(state.stage) && !state.pendingContrast && state.reviewProgress?.completed === true;
+}
+
+/** 所有复习入口共用的到期时间，已完成轻量巩固时不再排期。 */
+export function reviewDueAt(state: MemoryState, intensity: ReviewIntensity): Date | null {
+  if (!hasSchedule(state.stage) || reviewCompleted(state, intensity)) return null;
+  return state.card?.due ?? null;
 }
 
 /** 此刻是否到期复习。 */
-export function isDue(state: MemoryState, now: Date): boolean {
-  return hasSchedule(state.stage) && state.card !== null && state.card.due.getTime() <= now.getTime();
+export function isDue(state: MemoryState, now: Date, intensity: ReviewIntensity = 'high'): boolean {
+  const due = reviewDueAt(state, intensity);
+  return due !== null && due.getTime() <= now.getTime();
 }
 
 /** 此刻还能想起来的概率，越低越容易忘。 */

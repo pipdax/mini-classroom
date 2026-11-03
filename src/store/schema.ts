@@ -1,5 +1,6 @@
 import { blob, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import type { TopicBrief, TopicMessage } from '../shared/topic-planning';
+import type { ReviewProgress } from '../domain/review';
 
 // 时间统一存毫秒时间戳
 const timestamp = (name: string) => integer(name, { mode: 'timestamp_ms' });
@@ -72,6 +73,8 @@ export const memoryStates = sqliteTable('memory_states', {
   // 上次答错属于误解，下一次改用对比讲解
   pendingContrast: integer('pending_contrast', { mode: 'boolean' }).notNull().default(false),
   lastMisconception: text('last_misconception'),
+  // null 表示旧记录，读取时根据本轮有效作答还原证据
+  reviewProgress: text('review_progress', { mode: 'json' }).$type<ReviewProgress>(),
   // 已拆解过，不再重复拆解
   decomposedAt: timestamp('decomposed_at'),
   updatedAt: timestamp('updated_at').notNull(),
@@ -111,6 +114,9 @@ export const sessions = sqliteTable('sessions', {
   startedAt: timestamp('started_at').notNull(),
   finishedAt: timestamp('finished_at'),
   budgetSeconds: integer('budget_seconds').notNull(),
+  // 本节固定使用开始时的强度和时区，设置变化从下一节生效
+  reviewIntensity: text('review_intensity', { enum: ['low', 'high'] }).notNull().default('high'),
+  timeZone: text('time_zone'),
   // 这一节的新知识点来自哪个主题，用于新学按主题轮换
   newTopicId: text('new_topic_id'),
   device: text('device', { enum: ['desktop', 'mobile'] }).notNull().default('desktop'),

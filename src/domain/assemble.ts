@@ -1,6 +1,7 @@
 import { type GraphPoint, cognitiveEdge, prerequisitesSatisfied } from './edge';
 import { CONTRAST_FORM, isMobileForm } from './forms';
 import { type MemoryState, UNLEARNED, isDue, retrievability } from './memory';
+import type { ReviewIntensity } from './review';
 
 /** 候选池中的一项内容（组装只关心这些字段） */
 export interface PoolItem {
@@ -15,6 +16,7 @@ export interface PoolItem {
 }
 
 export interface AssembleInput {
+  reviewIntensity?: ReviewIntensity;
   points: GraphPoint[];
   states: Map<string, MemoryState>;
   pool: PoolItem[];
@@ -51,19 +53,19 @@ const DEFAULT_REVIEW_SECONDS = 60;
  * 5. 几类内容穿插排列；同一知识点优先选与上次不同的形式；手机上只选适合手机的形式。
  */
 export function assemble(input: AssembleInput): AssembleResult {
-  const { points, states, pool, now, budgetSeconds, maxNewPerSession, newTopicId, mobile = false, timeFactor = 1 } = input;
+  const { points, states, pool, now, budgetSeconds, maxNewPerSession, newTopicId, mobile = false, timeFactor = 1, reviewIntensity = 'high' } = input;
   const stateOf = (id: string) => states.get(id) ?? UNLEARNED;
   const included = points.filter((p) => !p.excluded);
   const excludedIds = new Set(points.filter((p) => p.excluded).map((p) => p.id));
   const byPosition = new Map(points.map((p) => [p.id, p.position]));
-  const usable = pool.filter((item) => !mobile || isMobileForm(item.questionForm));
+  const usable = pool.filter((item) => (reviewIntensity !== 'low' || item.questionForm === 'mcq') && (!mobile || isMobileForm(item.questionForm)));
   const seconds = (item: PoolItem) => item.estSeconds * timeFactor;
   const pick = (pointId: string, kind: PoolItem['kind'], lastForm: string | null) =>
     pickItem(usable, pointId, kind, lastForm, mobile);
 
   // 1. 到期复习
   const dueStates = included
-    .filter((p) => isDue(stateOf(p.id), now))
+    .filter((p) => isDue(stateOf(p.id), now, reviewIntensity))
     .map((p) => ({ id: p.id, state: stateOf(p.id) }))
     .sort((a, b) => retrievability(a.state.card!, now) - retrievability(b.state.card!, now));
   const reviews: PoolItem[] = [];

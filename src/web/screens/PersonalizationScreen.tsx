@@ -74,6 +74,7 @@ export function PersonalizationScreen({ tab }: { tab: PersonalizationTab }) {
           <div role="tabpanel" id="personalization-panel-learning" aria-labelledby="personalization-tab-learning" hidden={tab !== 'learning'}>
             <p className="muted small personalization-note">改动会自动保存，用于安排后续课堂。</p>
             <Pace settings={settings} save={save} />
+            <ReviewIntensitySettings settings={settings} save={save} />
             <Reminders settings={settings} save={save} />
             <Forms settings={settings} forms={resource.data.forms} save={save} />
             <Revisit settings={settings} save={save} />
@@ -106,6 +107,24 @@ function changedSettings(source: UserSettings, patch: Partial<UserSettings>): Pa
 }
 
 type SectionProps = { settings: UserSettings; save: (patch: Partial<UserSettings>) => void };
+
+/** 用两档清楚表达复习次数和作答负担的差异，沿用自动保存。 */
+export function ReviewIntensitySettings({ settings, save }: SectionProps) {
+  const low = settings.reviewIntensity === 'low';
+  return (
+    <Section title="复习强度" description="选择后续课堂的复习频率和考查形式。改动从下一节生效，正在进行的课堂保持原样。">
+      <div className="segmented" role="group" aria-label="复习强度">
+        <button type="button" aria-pressed={low} onClick={() => save({ reviewIntensity: 'low' })}>低 · 轻量巩固</button>
+        <button type="button" aria-pressed={!low} onClick={() => save({ reviewIntensity: 'high' })}>高 · 持续巩固</button>
+      </div>
+      <p className="hint" aria-live="polite">
+        {low
+          ? '首次选择题答对并自评轻松后，不再自动复习。有过困难或仅达到良好的内容，连续两次在不同日期答对且最后一次轻松后，完成轻量巩固。小题和常规复习使用选择题，遇到误解会先重新讲清楚。'
+          : '按掌握情况持续安排间隔复习：轻松内容的间隔逐渐拉长，需要巩固的内容继续确认，结合选择、简答和应用题等形式检验。'}
+      </p>
+    </Section>
+  );
+}
 
 function Pace({ settings, save }: SectionProps) {
   return (
@@ -236,7 +255,9 @@ function Forms({ settings, forms, save }: SectionProps & { forms: SettingsView['
   return (
     <Section
       title="形式偏好"
-      description="可以少出不喜欢的形式，或多用某些讲解形式。偏好只为减少烦躁，不承诺提升效果。核心检验形式保证检验的严格度，不能屏蔽。"
+      description={settings.reviewIntensity === 'low'
+        ? '低档的小题和常规复习使用选择题。讲解偏好照常生效，下面的其他检验形式偏好会保留，切回高档时使用。'
+        : '可以少出不喜欢的形式，或多用某些讲解形式。偏好只为减少烦躁，不承诺提升效果。核心检验形式保证检验的严格度，不能屏蔽。'}
     >
       <div className="settings-field-grid">
         <div className="field">
@@ -272,7 +293,7 @@ function Forms({ settings, forms, save }: SectionProps & { forms: SettingsView['
                 </div>
               </div>
               <label className="check" style={{ padding: 0 }}>
-                <input type="checkbox" checked={blocked.has(f.id)} disabled={f.core} onChange={(e) => toggleBlocked(f.id, e.target.checked)} />
+                <input type="checkbox" checked={blocked.has(f.id)} disabled={f.core || settings.reviewIntensity === 'low'} onChange={(e) => toggleBlocked(f.id, e.target.checked)} />
                 不出
               </label>
             </div>

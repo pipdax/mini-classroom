@@ -25,6 +25,33 @@ const item = (knowledgePointId: string, kind: PoolItem['kind'], form: string, qu
   estSeconds: 60,
 });
 
+describe('低档题目准备', () => {
+  it('所有阶段均备选择题，现有选择题可复用，不要求为了轮换而反复补题', () => {
+    const states = new Map<string, MemoryState>([
+      ['a', recallDueIn(1)],
+      ['b', { ...recallDueIn(1), stage: 'apply' }],
+      ['c', { ...recallDueIn(1), stage: 'retain' }],
+    ]);
+    const points = [point('a', 1), point('b', 2), point('c', 3)];
+    const needs = planPool({ ...base, points, states, pool: [item('a', 'review', 'mcq')], reviewIntensity: 'low' });
+    expect(needs).toEqual([
+      { kind: 'review', knowledgePointId: 'b', questionForm: 'mcq' },
+      { kind: 'review', knowledgePointId: 'c', questionForm: 'mcq' },
+    ]);
+  });
+
+  it('已经轻松完成的不再备复习，误解仍需对比讲解和选择题', () => {
+    const completed = { ...recallDueIn(1), reviewProgress: { attemptCount: 1, lastCorrectAt: now.toISOString(), completed: true } };
+    const states = new Map([
+      ['a', completed],
+      ['b', { ...completed, pendingContrast: true }],
+    ]);
+    expect(planPool({ ...base, points: [point('a', 1), point('b', 2)], states, pool: [], reviewIntensity: 'low' })).toEqual([
+      { kind: 'lesson', knowledgePointId: 'b', explainForm: 'explain_contrast', questionForm: 'mcq' },
+    ]);
+  });
+});
+
 describe('候选池补充规划', () => {
   it('新主题：为认知边缘上靠前的新知识点备讲解，小题形式交替', () => {
     const points = [point('a', 1), point('b', 2), point('c', 3), point('d', 4), point('e', 5), point('f', 6, ['a'])];

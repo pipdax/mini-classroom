@@ -11,7 +11,8 @@ import {
   pickForm,
   questionFormsFor,
 } from './forms';
-import { type MemoryState, UNLEARNED, checkStageOf, hasSchedule } from './memory';
+import { type MemoryState, UNLEARNED, checkStageOf, reviewDueAt } from './memory';
+import type { ReviewIntensity } from './review';
 
 /** 候选池需要补的一项内容 */
 export type PoolNeed =
@@ -19,6 +20,7 @@ export type PoolNeed =
   | { kind: 'lesson'; knowledgePointId: string; explainForm: ExplainForm; questionForm: QuestionForm };
 
 export interface PlanPoolInput {
+  reviewIntensity?: ReviewIntensity;
   points: GraphPoint[];
   states: Map<string, MemoryState>;
   pool: PoolItem[];
@@ -43,11 +45,11 @@ export interface PlanPoolInput {
  * 候选池里已有可用内容的，不重复生成。
  */
 export function planPool(input: PlanPoolInput): PoolNeed[] {
-  const { points, states, pool, now, horizonMs, newCount, spotCheckCount = 4, prefs = NO_PREFS } = input;
+  const { points, states, pool, now, horizonMs, newCount, spotCheckCount = 4, prefs = NO_PREFS, reviewIntensity = 'high' } = input;
   const stateOf = (id: string) => states.get(id) ?? UNLEARNED;
-  const itemsOf = (id: string, kind: PoolItem['kind']) => pool.filter((i) => i.knowledgePointId === id && i.kind === kind);
+  const itemsOf = (id: string, kind: PoolItem['kind']) => pool.filter((i) => i.knowledgePointId === id && i.kind === kind && (reviewIntensity !== 'low' || i.questionForm === 'mcq'));
   const hasOther = (id: string, kind: PoolItem['kind'], avoidForm: string | null) =>
-    itemsOf(id, kind).some((i) => i.form !== avoidForm && i.form !== CONTRAST_FORM);
+    itemsOf(id, kind).some((i) => ((kind === 'review' && reviewIntensity === 'low') || i.form !== avoidForm) && i.form !== CONTRAST_FORM);
   const hasContrast = (id: string) => itemsOf(id, 'lesson').some((i) => i.form === CONTRAST_FORM);
   const byPosition = points.filter((p) => !p.excluded).sort((a, b) => a.position - b.position);
   const excludedIds = new Set(points.filter((p) => p.excluded).map((p) => p.id));
@@ -56,7 +58,8 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
   for (const p of byPosition) {
     const state = stateOf(p.id);
     const checkStage = checkStageOf(state.stage);
-    const dueSoon = hasSchedule(state.stage) && state.card !== null && state.card.due.getTime() <= now.getTime() + horizonMs;
+    const due = reviewDueAt(state, reviewIntensity);
+    const dueSoon = due !== null && due.getTime() <= now.getTime() + horizonMs;
 
     if (dueSoon && state.pendingContrast) {
       if (!hasContrast(p.id)) {
@@ -64,11 +67,11 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
           kind: 'lesson',
           knowledgePointId: p.id,
           explainForm: CONTRAST_FORM,
-          questionForm: pickForm(questionFormsFor(checkStage, prefs), state.lastQuestionForm),
+          questionForm: pickForm(questionFormsFor(checkStage, prefs, false, reviewIntensity), state.lastQuestionForm),
         });
       }
     } else if (dueSoon) {
-      const questionForm = pickForm(questionFormsFor(checkStage, prefs), state.lastQuestionForm);
+      const questionForm = pickForm(questionFormsFor(checkStage, prefs, false, reviewIntensity), state.lastQuestionForm);
       if (!hasOther(p.id, 'review', state.lastQuestionForm)) needs.push({ kind: 'review', knowledgePointId: p.id, questionForm });
       // 每个到期知识点至少备有一种适合手机的形式
       const hasMobile = itemsOf(p.id, 'review').some((i) => isMobileForm(i.questionForm));
@@ -76,7 +79,7 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
         needs.push({
           kind: 'review',
           knowledgePointId: p.id,
-          questionForm: pickForm(questionFormsFor(checkStage, prefs, true), state.lastQuestionForm),
+          questionForm: pickForm(questionFormsFor(checkStage, prefs, true, reviewIntensity), state.lastQuestionForm),
         });
       }
     }
@@ -88,7 +91,7 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
           kind: 'lesson',
           knowledgePointId: p.id,
           explainForm: state.pendingContrast ? CONTRAST_FORM : pickForm(explainFormsFor(prefs), state.lastExplainForm, prefs.boosted),
-          questionForm: pickForm(questionFormsFor('understand', prefs), state.lastQuestionForm),
+          questionForm: pickForm(questionFormsFor('understand', prefs, false, reviewIntensity), state.lastQuestionForm),
         });
       }
     }
@@ -97,7 +100,7 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
   const inferred = byPosition.filter((p) => stateOf(p.id).stage === 'inferred').slice(0, spotCheckCount);
   for (const p of inferred) {
     if (itemsOf(p.id, 'review').length === 0) {
-      needs.push({ kind: 'review', knowledgePointId: p.id, questionForm: pickForm(questionFormsFor('recall', prefs, true), null) });
+      needs.push({ kind: 'review', knowledgePointId: p.id, questionForm: pickForm(questionFormsFor('recall', prefs, true, reviewIntensity), null) });
     }
   }
 
@@ -105,7 +108,7 @@ export function planPool(input: PlanPoolInput): PoolNeed[] {
   const edge = cognitiveEdge(points, states);
   const topics = [...new Set(edge.map((p) => p.topicId))];
   const explainForm = pickForm(explainFormsFor(prefs), null, prefs.boosted);
-  const checkForms = questionFormsFor('understand', prefs);
+  const checkForms = questionFormsFor('understand', prefs, false, reviewIntensity);
   for (const topicId of topics) {
     const topicEdge = edge.filter((p) => p.topicId === topicId).slice(0, newCount);
     // 边缘上每个知识点已备讲解的小题形式；没备的为 null，下面依次补上

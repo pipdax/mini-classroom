@@ -1,12 +1,15 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { CORE_FORMS, EXPLAIN_FORMS, type FormPrefs, QUESTION_FORMS } from './domain/forms';
+import type { ReviewIntensity } from './domain/review';
 import { type ContentGuidance, DEFAULT_CONTENT_GUIDANCE, GUIDANCE_MAX_LENGTH, resolveContentGuidance } from './shared/content-guidance';
 import type { Executor } from './store/db';
 import { appSettings } from './store/schema';
 
 /** 用户在设置页可调整的学习参数 */
 export const UserSettingsSchema = z.object({
+  /** 复习强度：高档持续混合检验，低档完成轻量巩固后停止自动复习。 */
+  reviewIntensity: z.enum(['low', 'high']),
   /** 一节微课堂的时长（分钟） */
   sessionMinutes: z.number().int().min(5, '一节至少 5 分钟').max(30, '一节最多 30 分钟'),
   /** 每节最多引入的新知识点数 */
@@ -32,6 +35,7 @@ export const UserSettingsSchema = z.object({
 export type UserSettings = z.infer<typeof UserSettingsSchema>;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
+  reviewIntensity: 'high',
   sessionMinutes: 10,
   maxNewPerSession: 2,
   reminderTimes: [],
@@ -45,6 +49,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
 
 /** 学习流程实际使用的参数：用户设置 + 部署配置 */
 export interface Settings {
+  reviewIntensity: ReviewIntensity;
   /** 一节微课堂的时间预算（秒） */
   budgetSeconds: number;
   /** 每节最多引入的新知识点数 */
@@ -86,6 +91,7 @@ export function writeUserSettings(db: Executor, patch: Partial<UserSettings>, no
 
 export function toSettings(user: UserSettings, env: NodeJS.ProcessEnv = process.env): Settings {
   return {
+    reviewIntensity: user.reviewIntensity,
     budgetSeconds: user.sessionMinutes * 60,
     maxNewPerSession: user.maxNewPerSession,
     generationConcurrency: Number(env.GENERATION_CONCURRENCY ?? 3),

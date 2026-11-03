@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { PoolItem } from '../domain/assemble';
 import type { GraphPoint } from '../domain/edge';
 import { type MemoryState, reviveCard } from '../domain/memory';
+import { EMPTY_REVIEW_PROGRESS, UNCONFIRMED_REVIEW_PROGRESS, nextReviewProgress } from '../domain/review';
 import type { ConnectionContent, Graph, LessonContent, ReviewContent } from '../shared/content';
 import type { TopicBrief } from '../shared/topic-planning';
 import type { Executor } from './db';
-import { existingKnowledge, items, knowledgePoints, memoryStates, relations, topics } from './schema';
+import { attempts, existingKnowledge, items, knowledgePoints, memoryStates, relations, sessions, topics } from './schema';
 
 // ---------- 学习主题与知识图谱 ----------
 
@@ -121,7 +122,48 @@ export function loadExistingKnowledge(db: Executor) {
 
 export function loadStates(db: Executor): Map<string, MemoryState> {
   const rows = db.select().from(memoryStates).all();
-  return new Map(rows.map((r) => [r.knowledgePointId, rowToState(r)]));
+  const states = new Map(rows.map((r) => [r.knowledgePointId, rowToState(r)]));
+  const legacyIds = rows.filter((row) => row.reviewProgress === null && states.get(row.knowledgePointId)!.card !== null).map((row) => row.knowledgePointId);
+  if (legacyIds.length === 0) return states;
+
+  // 一次加载旧记录，按当前记忆卡的作答次数限定本轮学习，避免复用重新学习前的成绩。
+  const records = db.select({ pointId: items.knowledgePointId, form: items.questionForm, attempt: attempts, timeZone: sessions.timeZone })
+    .from(attempts)
+    .innerJoin(items, eq(items.id, attempts.itemId))
+    .innerJoin(sessions, eq(sessions.id, attempts.sessionId))
+    .where(and(inArray(items.knowledgePointId, legacyIds), eq(attempts.applied, true), eq(attempts.voided, false), ne(items.kind, 'connection')))
+    .orderBy(asc(attempts.createdAt), sql`attempts.rowid`)
+    .all();
+  const byPoint = new Map<string, typeof records>();
+  for (const record of records) {
+    const own = byPoint.get(record.pointId) ?? [];
+    own.push(record);
+    byPoint.set(record.pointId, own);
+  }
+  for (const id of legacyIds) {
+    const state = states.get(id)!;
+    const count = state.card!.reps;
+    const own = count > 0 ? (byPoint.get(id) ?? []).slice(-count) : [];
+    const latestBefore = own.at(-1)?.attempt.stateBefore as MemoryState | null | undefined;
+    // 有缺失记录或无法确认最后一次作答时，不用旧成绩推断已经完成。
+    if (own.length !== count || !latestBefore || (latestBefore.card?.reps ?? 0) !== count - 1) continue;
+    const before = own[0]?.attempt.stateBefore as MemoryState | null | undefined;
+    let progress = UNCONFIRMED_REVIEW_PROGRESS;
+    if (before?.reviewProgress) progress = before.reviewProgress;
+    else if (before?.stage === 'unlearned' || before?.stage === 'inferred') progress = EMPTY_REVIEW_PROGRESS;
+    for (const { attempt, form, timeZone } of own) {
+      if (attempt.correct && attempt.selfRating === null) {
+        progress = UNCONFIRMED_REVIEW_PROGRESS;
+        continue;
+      }
+      const outcome = attempt.correct
+        ? { correct: true as const, selfRating: attempt.selfRating! }
+        : { correct: false as const };
+      progress = nextReviewProgress(progress, form, outcome, attempt.createdAt, timeZone ?? 'UTC');
+    }
+    state.reviewProgress = progress;
+  }
+  return states;
 }
 
 function rowToState(r: typeof memoryStates.$inferSelect): MemoryState {
@@ -133,6 +175,7 @@ function rowToState(r: typeof memoryStates.$inferSelect): MemoryState {
     failStreak: r.failStreak,
     pendingContrast: r.pendingContrast,
     lastMisconception: r.lastMisconception,
+    reviewProgress: r.reviewProgress ?? ((r.stage === 'unlearned' || r.stage === 'inferred') ? EMPTY_REVIEW_PROGRESS : UNCONFIRMED_REVIEW_PROGRESS),
   };
 }
 
@@ -146,6 +189,7 @@ export function saveState(db: Executor, knowledgePointId: string, state: MemoryS
       failStreak: state.failStreak,
       pendingContrast: state.pendingContrast,
       lastMisconception: state.lastMisconception,
+      reviewProgress: state.reviewProgress ?? null,
       updatedAt: now,
     })
     .where(eq(memoryStates.knowledgePointId, knowledgePointId))

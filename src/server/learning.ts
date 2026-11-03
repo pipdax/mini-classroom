@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Illustrator, StructuredModel } from '../ai/gateway';
 import { gradeConnection, gradeOpenAnswer, judgeAppeal } from '../ai/generators';
 import { type PoolItem, assemble } from '../domain/assemble';
@@ -17,8 +17,10 @@ import {
   applyReviewOutcome,
   hasLearned,
   hasSchedule,
+  isDue,
   needsDecomposition,
 } from '../domain/memory';
+import { UNCONFIRMED_REVIEW_PROGRESS } from '../domain/review';
 import type { PoolNeed } from '../domain/plan-pool';
 import { chooseNewTopic, revisitDue } from '../domain/topics';
 import { settleWithLimit } from '../jobs/concurrency';
@@ -132,6 +134,8 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     if (open) finishSession(open.id, now);
 
     const settings = currentSettings();
+    const timeZone = options.timeZone ?? SERVER_TIME_ZONE;
+    dayFormatter(timeZone);
     if (settings.dailySessionCap !== null && finishedToday(now, options.timeZone) >= settings.dailySessionCap) {
       return { ...empty, capped: true };
     }
@@ -156,6 +160,9 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
       if (opened) return { ...empty, session: viewSession(opened.id), resumed: true };
     }
 
+    if (currentSettings().reviewIntensity !== settings.reviewIntensity) {
+      throw new LearningError('复习强度已更改，请重新开始下一节。', 409);
+    }
     // 生成期间可能在地图里改了学习选择，按此刻的状态创建课堂
     points = loadPoints(db);
     states = loadStates(db);
@@ -184,7 +191,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     const sessionId = randomUUID();
     db.transaction((tx) => {
       tx.insert(sessions)
-        .values({ id: sessionId, startedAt: now, budgetSeconds: settings.budgetSeconds, newTopicId, device: mobile ? 'mobile' : 'desktop', guidance: options.guidance ?? null })
+        .values({ id: sessionId, startedAt: now, budgetSeconds: settings.budgetSeconds, reviewIntensity: settings.reviewIntensity, timeZone, newTopicId, device: mobile ? 'mobile' : 'desktop', guidance: options.guidance ?? null })
         .run();
       entries.forEach((entry, position) => tx.insert(sessionItems).values({ sessionId, itemId: entry.itemId, position, purpose: entry.purpose }).run());
       markItemsUsed(tx, picked.map((i) => i.id));
@@ -207,10 +214,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     const byId = new Map(points.map((p) => [p.id, p]));
     const purposes = picked.map((item) => purposeOf(item, states.get(item.knowledgePointId) ?? UNLEARNED));
     const count = (purpose: ItemPurpose) => purposes.filter((p) => p === purpose).length;
-    const dueCount = points.filter((p) => {
-      const card = states.get(p.id)?.card;
-      return !p.excluded && card != null && hasSchedule((states.get(p.id) ?? UNLEARNED).stage) && card.due.getTime() <= now.getTime();
-    }).length;
+    const dueCount = points.filter((p) => !p.excluded && isDue(states.get(p.id) ?? UNLEARNED, now, settings.reviewIntensity)).length;
     const openView = open ? viewSession(open.id) : null;
     return {
       open: openView
@@ -470,6 +474,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
       newTopicId: chooseTopicForNew(points, states, pool, mobile),
       mobile,
       timeFactor: factor,
+      reviewIntensity: settings.reviewIntensity,
     });
     return { ...result, timeFactor: factor };
   }
@@ -578,12 +583,15 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
    */
   function applyOutcome(attemptId: string, item: ItemRow, outcome: Outcome, now: Date) {
     const state = loadStates(db).get(item.knowledgePointId) ?? UNLEARNED;
+    const attempt = db.select().from(attempts).where(eq(attempts.id, attemptId)).get()!;
+    const session = db.select().from(sessions).where(eq(sessions.id, attempt.sessionId)).get()!;
+    const reviewContext = { intensity: session.reviewIntensity, timeZone: session.timeZone ?? 'UTC', answeredAt: attempt.createdAt };
     const question = questionOf(item)!;
     let next: MemoryState;
     if (item.kind === 'lesson' && !hasSchedule(state.stage) && state.stage !== 'inferred') {
-      next = applyLessonOutcome(state, { explainForm: item.form, questionForm: question.type }, outcome, now);
+      next = applyLessonOutcome(state, { explainForm: item.form, questionForm: question.type }, outcome, now, reviewContext);
     } else if (hasSchedule(state.stage) || state.stage === 'inferred') {
-      next = { ...applyReviewOutcome(state, question.type, outcome, now), lastExplainForm: item.kind === 'lesson' ? item.form : state.lastExplainForm };
+      next = { ...applyReviewOutcome(state, question.type, outcome, now, reviewContext), lastExplainForm: item.kind === 'lesson' ? item.form : state.lastExplainForm };
     } else {
       // 知识点已被重新学习等操作改变了阶段，这次作答不再计入
       next = state;
@@ -616,18 +624,27 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     if (db.select().from(memoryStates).where(eq(memoryStates.knowledgePointId, pointId)).get()?.excluded) return;
     const state = loadStates(db).get(pointId);
     if (!state?.card || !hasSchedule(state.stage)) return;
-    saveState(db, pointId, { ...state, card: { ...state.card, due: now } }, now);
+    saveState(db, pointId, { ...state, reviewProgress: UNCONFIRMED_REVIEW_PROGRESS, card: { ...state.card, due: now } }, now);
   }
 
-  /** 这次作答之后（含同一时刻），同一知识点是否又有计入记忆的作答 */
+  /** 之后是否又有有效作答；相同时间按入库顺序判断，作废记录不阻止申诉。 */
   function hasLaterApplied(attempt: typeof attempts.$inferSelect, knowledgePointId: string): boolean {
-    return db
-      .select({ id: attempts.id, createdAt: attempts.createdAt })
+    const later = db
+      .select({ id: attempts.id })
       .from(attempts)
       .innerJoin(items, eq(attempts.itemId, items.id))
-      .where(and(eq(items.knowledgePointId, knowledgePointId), eq(attempts.applied, true), ne(attempts.id, attempt.id), ne(items.kind, 'connection')))
-      .all()
-      .some((a) => a.createdAt.getTime() >= attempt.createdAt.getTime());
+      .where(and(
+        eq(items.knowledgePointId, knowledgePointId),
+        eq(attempts.applied, true),
+        eq(attempts.voided, false),
+        ne(items.kind, 'connection'),
+        or(
+          gt(attempts.createdAt, attempt.createdAt),
+          and(eq(attempts.createdAt, attempt.createdAt), sql`attempts.rowid > (select rowid from attempts where id = ${attempt.id})`),
+        ),
+      ))
+      .get();
+    return later !== undefined;
   }
 
   function requireSessionItem(sessionId: string, itemId: string): ItemRow {
@@ -661,6 +678,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
       id: sessionId,
       startedAt: session.startedAt,
       budgetSeconds: session.budgetSeconds,
+      reviewIntensity: session.reviewIntensity,
       guidance: session.guidance,
       items: links.map((link) => {
         const row = rows.get(link.itemId)!;

@@ -50,6 +50,26 @@ const ids = (items: PoolItem[]) => items.map((i) => i.id);
 const total = (items: PoolItem[]) => items.reduce((s, i) => s + i.estSeconds, 0);
 const reviewsFor = (count: number) => Array.from({ length: count }, (_, i) => point(`k${i}`, i));
 
+describe('低档课堂安排', () => {
+  it('已完成轻量巩固的不占复习预算，也不因旧到期记录而暂停新学', () => {
+    const points = [...reviewsFor(40), point('new', 40)];
+    const states = new Map(points.slice(0, 40).map((p) => [p.id, {
+      ...recall(10), reviewProgress: { attemptCount: 1, lastCorrectAt: now.toISOString(), completed: true },
+    }]));
+    const pool = [...points.slice(0, 40).map((p) => review(p.id, 'mcq')), lesson('new')];
+    const result = assemble({ ...base, points, states, pool, reviewIntensity: 'low' });
+    expect(result.newPaused).toBe(false);
+    expect(ids(result.items)).toEqual(['l-new-explain_direct']);
+  });
+
+  it('低档不使用旧简答题兜底，补好选择题后才安排', () => {
+    const points = [point('a', 1)];
+    const states = new Map([['a', recall(1)]]);
+    expect(assemble({ ...base, points, states, pool: [review('a')], reviewIntensity: 'low' }).items).toEqual([]);
+    expect(ids(assemble({ ...base, points, states, pool: [review('a'), review('a', 'mcq')], reviewIntensity: 'low' }).items)).toEqual(['r-a-mcq']);
+  });
+});
+
 describe('组装规则', () => {
   it('到期复习按遗忘风险排序，最容易忘的在前；未到期的不排', () => {
     const points = [point('a', 1), point('b', 2), point('c', 3)];

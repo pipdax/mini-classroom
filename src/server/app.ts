@@ -71,7 +71,8 @@ const ExportBody = z.object({ topicIds: z.array(z.string()).min(1, '请选择至
 const ReviewQuery = z.object({ timeZone: z.string().min(1), topicId: z.string().optional() });
 const TimeZoneQuery = z.object({ timeZone: z.string().min(1) });
 const DayParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '日期格式应为 YYYY-MM-DD');
-const SettingsPatch = UserSettingsSchema.partial();
+const SettingsPatch = UserSettingsSchema.partial().extend({ applyToCurrentSession: z.boolean().optional() })
+  .refine((patch) => !patch.applyToCurrentSession || patch.reviewIntensity !== undefined, '修改本次课程时请指定复习强度');
 const AiTestBody = z.object({ target: z.enum(['text', 'image']), patch: AiSettingsPatchSchema.default({}) });
 
 /** 组装 HTTP 应用；依赖由调用方注入，便于测试。 */
@@ -228,7 +229,14 @@ export function createApp({ services, clock, devMode, frontendUrl, webRoot }: Ap
   // ---------- 设置与今天的安排 ----------
 
   app.get('/api/settings', (c) => c.json(preferences.getSettings()));
-  app.put('/api/settings', async (c) => c.json(preferences.updateSettings(await body(c, SettingsPatch), now(c))));
+  app.put('/api/settings', async (c) => {
+    const { applyToCurrentSession, ...patch } = await body(c, SettingsPatch);
+    const at = now(c);
+    const save = () => preferences.updateSettings(patch, at);
+    return c.json(applyToCurrentSession
+      ? await learning.updateCurrentReviewIntensity(patch.reviewIntensity!, at, save)
+      : save());
+  });
   app.get('/api/settings/ai', (c) => c.json(preferences.getAiSettings()));
   app.put('/api/settings/ai', async (c) => c.json(preferences.updateAiSettings(await body(c, AiSettingsPatchSchema), now(c))));
   app.post('/api/settings/ai/test', async (c) => {

@@ -101,6 +101,17 @@ function SessionFlow(props: { session: Session; notice?: string; onFinished: (re
     await finish();
   }
 
+  if (session.items.length === 0) {
+    return (
+      <section className="panel">
+        <h1>本节无需继续考查</h1>
+        <p className="muted">课程已按新的复习强度调整，学习记录已保留。</p>
+        {error && <p className="error-text" role="alert">{error}</p>}
+        <button type="button" className="btn primary" onClick={finish} disabled={busy}>完成这一节</button>
+      </section>
+    );
+  }
+
   return (
     <div className="grid top">
       <SelectionToAsk scope=".learn-article" onQuote={(text) => askRef.current?.quote(text)} />

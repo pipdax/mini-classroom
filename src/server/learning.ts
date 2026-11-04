@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Illustrator, StructuredModel } from '../ai/gateway';
-import { gradeConnection, gradeOpenAnswer, judgeAppeal } from '../ai/generators';
+import { generateReview, gradeConnection, gradeOpenAnswer, judgeAppeal } from '../ai/generators';
 import { type PoolItem, assemble } from '../domain/assemble';
 import { timeFactor } from '../domain/calibration';
 import { cognitiveEdge, prerequisitesSatisfied } from '../domain/edge';
-import { CONTRAST_FORM, type ExplainForm, type QuestionForm, isMobileForm } from '../domain/forms';
+import { CONTRAST_FORM, type ExplainForm, type QuestionForm, isMobileForm, pickForm, questionFormsFor } from '../domain/forms';
 import { gradeMcq, gradePickLine, misconceptionOf } from '../domain/grading';
 import {
   DECOMPOSE_FAIL_STREAK,
@@ -15,20 +15,22 @@ import {
   UNLEARNED,
   applyLessonOutcome,
   applyReviewOutcome,
+  checkStageOf,
   hasLearned,
   hasSchedule,
   isDue,
   needsDecomposition,
+  reviewCompleted,
 } from '../domain/memory';
-import { UNCONFIRMED_REVIEW_PROGRESS } from '../domain/review';
+import { UNCONFIRMED_REVIEW_PROGRESS, type ReviewIntensity } from '../domain/review';
 import type { PoolNeed } from '../domain/plan-pool';
 import { chooseNewTopic, revisitDue } from '../domain/topics';
 import { settleWithLimit } from '../jobs/concurrency';
 import { fillPool } from '../jobs/fill-pool';
 import { contextOf, generateItem, saveGeneratedItem } from '../jobs/generate-item';
 import { enqueue } from '../jobs/queue';
-import { type Settings, readState, writeState } from '../settings';
-import { type ConnectionContent, type Grade, type Question, isOpenQuestion } from '../shared/content';
+import { type Settings, type UserSettings, readState, writeState } from '../settings';
+import { type ConnectionContent, type Grade, type LessonContent, type Question, isOpenQuestion } from '../shared/content';
 import { sameContentGuidance } from '../shared/content-guidance';
 import type { Db } from '../store/db';
 import {
@@ -45,7 +47,7 @@ import {
   saveState,
   wasDecomposed,
 } from '../store/repo';
-import { attempts, connections, items, jobs, memoryStates, sessionItems, sessions, topics } from '../store/schema';
+import { attempts, connections, illustrations, items, jobs, memoryStates, sessionItems, sessions, topics } from '../store/schema';
 import {
   type Answer,
   type Appeal,
@@ -249,6 +251,99 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     };
   }
 
+  /**
+   * 只更新本节未提交的内容，讲解正文和已作答记录保留。
+   * 新题全部准备成功后，将课程与设置一起提交；生成失败或课堂已变化时不覆盖。
+   */
+  async function updateCurrentReviewIntensity(intensity: ReviewIntensity, now: Date, commitSettings: () => UserSettings): Promise<UserSettings> {
+    const session = findOpenSession();
+    if (!session || session.reviewIntensity === intensity) return commitSettings();
+    const generationSettings = currentSettings();
+    const points = loadPoints(db);
+    const byId = new Map(points.map((point) => [point.id, point]));
+    const states = loadStates(db);
+    const entries = db.select().from(sessionItems).where(eq(sessionItems.sessionId, session.id)).orderBy(asc(sessionItems.position)).all();
+    const rows = new Map(getItems(db, entries.map((entry) => entry.itemId)).map((row) => [row.id, row]));
+    const pointIds = [...new Set([...rows.values()].map((row) => row.knowledgePointId))];
+    const known = loadExistingKnowledge(db).map((knowledge) => knowledge.text);
+
+    // 等待出题时允许继续使用应用，提交前核对课程、作答和学习选择是否发生变化。
+    function snapshot() {
+      return {
+        session: db.select().from(sessions).where(eq(sessions.id, session!.id)).get(),
+        entries: db.select().from(sessionItems).where(eq(sessionItems.sessionId, session!.id)).orderBy(asc(sessionItems.position)).all(),
+        attempts: db.select().from(attempts).where(eq(attempts.sessionId, session!.id)).orderBy(asc(attempts.id)).all(),
+        states: pointIds.length === 0 ? [] : db.select().from(memoryStates).where(inArray(memoryStates.knowledgePointId, pointIds)).orderBy(asc(memoryStates.knowledgePointId)).all(),
+      };
+    }
+    const before = snapshot();
+    const answered = new Set(before.attempts.map((attempt) => attempt.itemId));
+    const removed: string[] = [];
+    const replacements: { entry: typeof entries[number]; row: ItemRow; questionForm: QuestionForm }[] = [];
+    let previousNewForm: string | null = null;
+    for (const entry of entries) {
+      const row = rows.get(entry.itemId)!;
+      if (answered.has(row.id)) {
+        if (entry.purpose === 'new') previousNewForm = row.questionForm;
+        continue;
+      }
+      const point = byId.get(row.knowledgePointId);
+      const state = states.get(row.knowledgePointId) ?? UNLEARNED;
+      if (!point || point.excluded || reviewCompleted(state, intensity)) {
+        removed.push(row.id);
+        continue;
+      }
+      if (row.kind === 'connection') continue;
+      const available = questionFormsFor(checkStageOf(state.stage), generationSettings.formPrefs, session.device === 'mobile', intensity);
+      const avoid = entry.purpose === 'new' ? previousNewForm : state.lastQuestionForm;
+      const questionForm = pickForm(available, avoid);
+      if (entry.purpose === 'new') previousNewForm = questionForm;
+      if (row.questionForm !== questionForm) replacements.push({ entry, row, questionForm });
+    }
+
+    const generated = await settleWithLimit(replacements.map(({ entry, row, questionForm }) => async () => {
+      const lesson = row.kind === 'lesson' ? row.content as LessonContent : null;
+      const guidance = [session.guidance, lesson ? `请围绕这份已有讲解编写配套小题：\n${lesson.explanation}` : null].filter(Boolean).join('\n\n');
+      const context = contextOf(byId.get(row.knowledgePointId)!, byId, { guidance, state: states.get(row.knowledgePointId), existingKnowledge: known });
+      const result = await generateReview(model, context, questionForm, { contentGuidance: generationSettings.contentGuidance });
+      return {
+        entry, row, questionForm,
+        content: lesson ? { ...lesson, check: result.question } : { question: result.question },
+        estSeconds: lesson ? row.estSeconds : result.estSeconds,
+      };
+    }), generationSettings.generationConcurrency);
+    if (generated.some((result) => result.status === 'rejected')) {
+      throw new LearningError('未能更新本次课程，请重试。原课程和设置已保留。', 502);
+    }
+
+    return db.transaction((tx) => {
+      if (JSON.stringify(snapshot()) !== JSON.stringify(before) || JSON.stringify(currentSettings()) !== JSON.stringify(generationSettings)) {
+        throw new LearningError('课程或设置已发生变化，请重新选择是否修改本次课程。', 409);
+      }
+      const saved = commitSettings();
+      for (const result of generated) {
+        if (result.status !== 'fulfilled') continue;
+        const { entry, row, questionForm, content, estSeconds } = result.value;
+        const itemId = insertItem(tx, {
+          knowledgePointId: row.knowledgePointId, kind: row.kind,
+          form: row.kind === 'lesson' ? row.form : questionForm,
+          questionForm, content, estSeconds, status: 'used',
+        }, now);
+        tx.delete(sessionItems).where(and(eq(sessionItems.sessionId, session.id), eq(sessionItems.itemId, row.id))).run();
+        tx.insert(sessionItems).values({ ...entry, itemId }).run();
+        // 讲解没有改写，原插画跟随新小题继续使用，包括尚未完成或可重试的插画。
+        if (row.kind === 'lesson') tx.update(illustrations).set({ itemId }).where(eq(illustrations.itemId, row.id)).run();
+        tx.update(items).set({ status: 'void' }).where(eq(items.id, row.id)).run();
+      }
+      if (removed.length > 0) {
+        tx.delete(sessionItems).where(and(eq(sessionItems.sessionId, session.id), inArray(sessionItems.itemId, removed))).run();
+        tx.update(items).set({ status: 'void' }).where(inArray(items.id, removed)).run();
+      }
+      tx.update(sessions).set({ reviewIntensity: intensity }).where(eq(sessions.id, session.id)).run();
+      return saved;
+    });
+  }
+
   // ---------- 作答 ----------
 
   /**
@@ -257,6 +352,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
    */
   async function submitAttempt(input: { sessionId: string; itemId: string; answer: Answer; durationMs?: number }, now: Date) {
     const item = requireSessionItem(input.sessionId, input.itemId);
+    const reviewIntensity = db.select().from(sessions).where(eq(sessions.id, input.sessionId)).get()!.reviewIntensity;
     const exists = db
       .select({ id: attempts.id })
       .from(attempts)
@@ -278,6 +374,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
         sessionId: input.sessionId,
         answer: input.answer,
         correct: grade.correct,
+        reviewIntensity,
         errorType: grade.errorType,
         feedback: grade.feedback,
         durationMs: input.durationMs,
@@ -585,7 +682,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     const state = loadStates(db).get(item.knowledgePointId) ?? UNLEARNED;
     const attempt = db.select().from(attempts).where(eq(attempts.id, attemptId)).get()!;
     const session = db.select().from(sessions).where(eq(sessions.id, attempt.sessionId)).get()!;
-    const reviewContext = { intensity: session.reviewIntensity, timeZone: session.timeZone ?? 'UTC', answeredAt: attempt.createdAt };
+    const reviewContext = { intensity: attempt.reviewIntensity, timeZone: session.timeZone ?? 'UTC', answeredAt: attempt.createdAt };
     const question = questionOf(item)!;
     let next: MemoryState;
     if (item.kind === 'lesson' && !hasSchedule(state.stage) && state.stage !== 'inferred') {
@@ -720,6 +817,7 @@ export function createLearning({ db, model, settings: currentSettings, illustrat
     updateTopic,
     nextSession,
     previewNext,
+    updateCurrentReviewIntensity,
     submitAttempt,
     rateAttempt,
     appealAttempt,

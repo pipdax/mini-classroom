@@ -38,6 +38,9 @@ export type Cheatsheet = Jsonify<ReturnType<Knowledge['getCheatsheet']>>;
 export type PlacementState = Jsonify<ReturnType<PlacementService['status']>>;
 export type SettingsView = Jsonify<ReturnType<Preferences['getSettings']>>;
 export type UserSettings = SettingsView['settings'];
+export interface SettingsSaveOptions {
+  applyToCurrentSession?: boolean;
+}
 export type Today = Jsonify<ReturnType<Preferences['today']>>;
 export type AiSettingsView = Jsonify<ReturnType<Preferences['getAiSettings']>>;
 export type AiTestResult = Awaited<ReturnType<Preferences['testAi']>>;
@@ -162,7 +165,7 @@ export const api = {
     request<{ filename: string; markdown: string }>('POST', '/api/export', { topicIds, records, cheatsheetId }),
 
   settings: () => request<SettingsView>('GET', '/api/settings'),
-  saveSettings: (patch: Partial<UserSettings>) => request<UserSettings>('PUT', '/api/settings', patch),
+  saveSettings: (patch: Partial<UserSettings>, options: SettingsSaveOptions = {}) => request<UserSettings>('PUT', '/api/settings', { ...patch, ...options }),
   aiSettings: () => request<AiSettingsView>('GET', '/api/settings/ai'),
   saveAiSettings: (patch: AiSettingsPatch) => request<AiSettingsView>('PUT', '/api/settings/ai', patch),
   testAi: (target: 'text' | 'image', patch: AiSettingsPatch) => request<AiTestResult>('POST', '/api/settings/ai/test', { target, patch }),

@@ -64,6 +64,13 @@
       "when": 1793674086276,
       "tag": "0008_review_intensity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793763080977,
+      "tag": "0009_attempt_review_intensity",
+      "breakpoints": true
     }
   ]
 }

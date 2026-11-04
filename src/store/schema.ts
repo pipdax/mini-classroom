@@ -147,6 +147,8 @@ export const attempts = sqliteTable('attempts', {
   errorType: text('error_type', { enum: ['misconception', 'forgetting'] }),
   feedback: text('feedback'),
   selfRating: text('self_rating', { enum: ['hard', 'good', 'easy'] }),
+  // 当前课堂可以换档，已提交的作答仍按提交时的规则更新记忆
+  reviewIntensity: text('review_intensity', { enum: ['low', 'high'] }).notNull().default('high'),
   // 记忆状态是否已按本次作答更新（答对时要等自评后才更新）
   applied: integer('applied', { mode: 'boolean' }).notNull().default(false),
   // 按本次作答更新之前的记忆状态，申诉改判时据此还原

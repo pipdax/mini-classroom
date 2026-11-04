@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useEffect, useState } from 'react';
-import { type SettingsView, type UserSettings, api } from '../api';
+import { type SettingsSaveOptions, type SettingsView, type UserSettings, api } from '../api';
 import { useResource } from '../hooks';
 import { notificationPermission, requestNotificationPermission, showReminder } from '../reminders';
 import { Section } from '../components/SettingsSection';
@@ -31,21 +31,23 @@ export function PersonalizationScreen({ tab }: { tab: PersonalizationTab }) {
     document.getElementById(`personalization-tab-${next}`)?.focus();
   }
 
-  async function save(patch: Partial<UserSettings>) {
+  async function save(patch: Partial<UserSettings>, options: SettingsSaveOptions = {}) {
     const before = settings;
-    if (!before) return;
+    if (!before) return false;
     // 先在界面上改过来，再保存；保存失败时退回原值
     setSettings((current) => current && { ...current, ...patch });
     setError('');
-    setStamp('保存中…');
+    setStamp(options.applyToCurrentSession ? '正在更新本次课程…' : '保存中…');
     try {
-      const saved = await api.saveSettings(patch);
+      const saved = await api.saveSettings(patch, options);
       setSettings((current) => current && { ...current, ...changedSettings(saved, patch) });
       setStamp(`已保存 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`);
+      return true;
     } catch (e) {
       setSettings((current) => current && { ...current, ...changedSettings(before, patch) });
       setStamp('');
       setError((e as Error).message);
+      return false;
     }
   }
 
@@ -106,17 +108,43 @@ function changedSettings(source: UserSettings, patch: Partial<UserSettings>): Pa
   return Object.fromEntries(Object.keys(patch).map((key) => [key, source[key as keyof UserSettings]]));
 }
 
-type SectionProps = { settings: UserSettings; save: (patch: Partial<UserSettings>) => void };
+type SectionProps = { settings: UserSettings; save: (patch: Partial<UserSettings>, options?: SettingsSaveOptions) => Promise<boolean> };
 
 /** 用两档清楚表达复习次数和作答负担的差异，沿用自动保存。 */
 export function ReviewIntensitySettings({ settings, save }: SectionProps) {
+  const [applyToCurrentSession, setApplyToCurrentSession] = useState(false);
+  const [saving, setSaving] = useState(false);
   const low = settings.reviewIntensity === 'low';
+
+  async function changeIntensity(reviewIntensity: UserSettings['reviewIntensity'], apply = applyToCurrentSession) {
+    if (saving) return false;
+    setSaving(true);
+    try {
+      return await save({ reviewIntensity }, { applyToCurrentSession: apply });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeScope(checked: boolean) {
+    setApplyToCurrentSession(checked);
+    // 先选档位再勾选也会立即应用，无需重新点一次档位。
+    if (checked && !await changeIntensity(settings.reviewIntensity, true)) setApplyToCurrentSession(false);
+  }
+
   return (
-    <Section title="复习强度" description="选择后续课堂的复习频率和考查形式。改动从下一节生效，正在进行的课堂保持原样。">
-      <div className="segmented" role="group" aria-label="复习强度">
-        <button type="button" aria-pressed={low} onClick={() => save({ reviewIntensity: 'low' })}>低 · 轻量巩固</button>
-        <button type="button" aria-pressed={!low} onClick={() => save({ reviewIntensity: 'high' })}>高 · 持续巩固</button>
+    <Section title="复习强度" description="选择复习频率和考查形式。默认改动从下一节生效，正在进行的课堂保持原样。">
+      <div className="actions-row">
+        <div className="segmented" role="group" aria-label="复习强度">
+          <button type="button" aria-pressed={low} disabled={saving} onClick={() => changeIntensity('low')}>低 · 轻量巩固</button>
+          <button type="button" aria-pressed={!low} disabled={saving} onClick={() => changeIntensity('high')}>高 · 持续巩固</button>
+        </div>
+        <label className="check">
+          <input type="checkbox" checked={applyToCurrentSession} disabled={saving} onChange={(event) => changeScope(event.target.checked)} />
+          同时修改本次课程
+        </label>
       </div>
+      <p className="hint">勾选后立即按所选强度调整本节尚未作答的内容，保留讲解和已作答记录。之后切换档位也会同步；取消勾选只影响后续操作。</p>
       <p className="hint" aria-live="polite">
         {low
           ? '首次选择题答对并自评轻松后，不再自动复习。有过困难或仅达到良好的内容，连续两次在不同日期答对且最后一次轻松后，完成轻量巩固。小题和常规复习使用选择题，遇到误解会先重新讲清楚。'

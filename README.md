@@ -10,7 +10,7 @@
 
 [看看能帮你做什么](#你能得到什么) · [开始使用](#开始使用) · [参与开发](#参与开发)
 
-![把制作会议纪要 Skill 的目标拆成知识点，选取触发条件作为今天约 10 分钟的学习内容](docs/assets/readme/topic-to-lessons.png)
+![微课堂：每天 10 分钟，搭建属于你的认知地图——从学习目标出发，拆分小知识点，通过多形式微课堂学习与定时复习建立知识联系](docs/assets/readme/business-overview.png)
 
 ![首页：输入想学的内容，或继续未完成的微课堂](docs/assets/screenshots/home.png)
 
@@ -25,6 +25,8 @@
 AI 会和你聊清楚**学来做什么、已经会什么、这次学到哪里**。你确认范围后，再开始准备学习内容。
 
 做一次摸底，可以减少重复学习已会的内容。也可以跳过，直接从基础开始。
+
+![把制作会议纪要 Skill 的目标拆成知识点，选取触发条件作为今天约 10 分钟的学习内容](docs/assets/readme/topic-to-lessons.png)
 
 ![学习目标澄清页：通过对话明确目的、范围和已有基础，确认后才加入学习计划](docs/assets/screenshots/topic-planning.png)
 

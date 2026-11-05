@@ -1,0 +1,9 @@
+{
+  "title": "微课堂：每天 10 分钟，搭建属于你的认知地图",
+  "created": "2026-11-04",
+  "tool": "内置 image_gen",
+  "file": "business-overview.png",
+  "source": "business-overview-candidates/01-learning-journey.png",
+  "purpose": "在用户选定的学习旅程图上更新标题，用作 README 的完整业务流程总览。",
+  "prompt": "Use case: text-localization / precise text edit.\nEdit the attached 微课堂 infographic. Change ONLY the large title in the top title band.\nReplace the current title “微课堂：从学习目标到认知地图” with this EXACT new Chinese title:\n“微课堂：每天 10 分钟，搭建属于你的认知地图”\nUse the same dark deep-teal, bold, friendly hand-lettered typographic character as the original. Keep the title on a single clear horizontal line across the top band, reducing its font size just enough to fit naturally with generous left/right margins. It must remain visually dominant and perfectly readable. Retain or subtly reposition the short decorative teal underline and amber emphasis marks only if necessary to accommodate the longer title.\nABSOLUTELY preserve everything below the title band: original canvas dimensions and landscape aspect ratio; all five stages and their positions; the “03 每天 10 分钟微课堂” label; every other Chinese word; all arrows, numbers and icons; the learner, goal cards, central open book, 10-minute clock, calendar, knowledge network, plants, books, cream background, colors and texture. Do not redraw, move, resize, crop, or simplify the body of the illustration. Do not add a subtitle. This is a precise title-only revision to the selected final illustration."
+}
